@@ -57,14 +57,14 @@ Additional information:
 
 #if (NANO_OS_PLUGIN_DEBUG_PRINT_ENABLED == 1)
 /** \brief Macro to print a debug string */
-#define LOG_DEBUG(string, ...)                  gdb_api->pfDebugOutf((string), __VA_ARGS__)
+#define LOG_DEBUG(string, ...)                  gdb_api->pfDebugOutf((string), ##__VA_ARGS__)
 #else
 #define LOG_DEBUG(string, ...)
 #endif /* (NANO_OS_PLUGIN_DEBUG_PRINT_ENABLED == 1) */
 
 #if (NANO_OS_PLUGIN_ERROR_PRINT_ENABLED == 1)
 /** \brief Macro to print an error string */
-#define LOG_ERROR(string, ...)                  gdb_api->pfErrorOutf((string), __VA_ARGS__)
+#define LOG_ERROR(string, ...)                  gdb_api->pfErrorOutf((string), ##__VA_ARGS__)
 #else
 #define LOG_ERROR(string, ...)
 #endif /* (NANO_OS_PLUGIN_ERROR_PRINT_ENABLED == 1) */
@@ -75,6 +75,50 @@ Additional information:
 *
 **********************************************************************
 */
+
+
+/** \brief Nano OS debug informations for Segger GDB RTOS plugin */
+typedef struct _nano_os_data_structure_offsets_t
+{
+    /** \brief Offset of pointer to current task in nano_os_t structure */
+    U16 current_task_offset;
+    /** \brief Offset of tick count in nano_os_t structure */
+    U16 tick_count_offset;
+    /** \brief Offset of global task list in nano_os_t structure */
+    U16 task_list_offset;
+
+    /** \brief Offset of top of stack in nano_os_task_t structure */
+    U8 top_of_stack_offset;
+    /** \brief Offset of stack origin in nano_os_task_t structure */
+    U8 stack_origin_offset;
+    /** \brief Offset of stack size in nano_os_task_t structure */
+    U8 stack_size_offset;
+    /** \brief Offset of task name in nano_os_task_t structure */
+    U8 task_name_offset;
+    /** \brief Offset of task state in nano_os_task_t structure */
+    U8 task_state_offset;
+    /** \brief Offset of task priority in nano_os_task_t structure */
+    U8 task_priority_offset;
+    /** \brief Offset of task id in nano_os_task_t structure */
+    U8 task_id_offset;
+    /** \brief Offset of task wait object in nano_os_task_t structure */
+    U8 task_wait_object_offset;
+    /** \brief Offset of task wait timeout in nano_os_task_t structure */
+    U8 task_wait_timeout_offset;
+    /** \brief Offset of task time slice in nano_os_task_t structure */
+    U8 task_time_slice_offset;
+    /** \brief Offset of next task in nano_os_task_t structure */
+    U8 next_task_offset;
+
+    /** \brief Offset of wait object type in nano_os_wait_object_t structure */
+    U8 wait_object_type_offset;
+    /** \brief Offset of wait object id in nano_os_wait_object_t structure */
+    U8 wait_object_id_offset;
+    /** \brief Offset of wait object name in nano_os_wait_object_t structure */
+    U8 wait_object_name_offset;
+
+} nano_os_data_structure_offsets_t;
+
 
 
 /** \brief Nano OS thread data */
@@ -107,10 +151,18 @@ typedef struct _nano_os_plugin_t
     /** \brief Indicate if the OS is tarted */
     bool os_started;
 
+    /** \brief Indicate if the data structure offsets have been loaded */
+    bool offsets_loaded;
+
+    /** \brief Nano OS data structure offsets */
+    nano_os_data_structure_offsets_t offsets;
+
     /** \brief Thread count */
     U32 thread_count;
     /** \brief Thread list */
     nano_os_thread_t* threads;
+    /** \brief Tick count */
+    U32 tick_count;
 
     /** \brief Current thread */
     nano_os_thread_t* current_thread;
@@ -136,11 +188,12 @@ typedef struct _nano_os_plugin_t
 /** \brief Pointer to the RTOS symbol table */
 static RTOS_SYMBOLS nano_os_symbols[] = {
                                             { "g_nano_os", 0, 0 },
+                                            { "g_nano_os_debug_infos", 0, 0 },
                                             { NULL, 0, 0 }
                                         };
 
 /** \brief GDB plugin API */
-static GDB_API* gdb_api = NULL;
+static const GDB_API* gdb_api = NULL;
 
 /** \brief Nano OS plugin data */
 static nano_os_plugin_t nano_os_plugin;
@@ -163,11 +216,11 @@ static const char* nano_os_thread_states[] = {
 **********************************************************************
 */
 
-/** \brief Print the symbol table */
-static void printSymbolTable(void);
-
 /** \brief Look for a thread with the given id */
 static nano_os_thread_t* findThread(const U32 id);
+
+/** \brief Fill Nano OS offsets */
+static bool fillNanoOsOffsets(void);
 
 /** \brief Fill informations about Nano OS */
 static bool fillNanoOsInfos(void);
@@ -229,7 +282,18 @@ EXPORT RTOS_SYMBOLS* RTOS_GetSymbols()
 /** \brief Returns the number of threads */
 EXPORT U32 RTOS_GetNumThreads() 
 {
-    return nano_os_plugin.thread_count;
+    U32 ret = 1;
+
+    /* Check OS state */
+    if (nano_os_plugin.os_started)
+    {
+        if (nano_os_plugin.current_thread != NULL)
+        {
+            ret = nano_os_plugin.thread_count;
+        }
+    }
+
+    return ret;
 }
 
 /** \brief Returns the ID of the currently running thread */
@@ -281,6 +345,10 @@ EXPORT int RTOS_GetThreadDisplay(char *pDisplay, U32 threadid)
                                             thread->name, 
                                             nano_os_thread_states[thread->state], 
                                             thread->priority);
+        }
+        else
+        {
+            ret = snprintf(pDisplay, 256u, "Unknown thread");
         }
     }
     else
@@ -392,7 +460,8 @@ EXPORT int RTOS_UpdateThreads()
     bool success;
 
     // Fill informations about Nano OS
-    success = fillNanoOsInfos();
+    success = fillNanoOsOffsets();
+    success = success && fillNanoOsInfos();
     if (success)
     {
 
@@ -413,20 +482,6 @@ EXPORT int RTOS_UpdateThreads()
 */
 
 
-/** \brief Print the symbol table */
-static void printSymbolTable(void)
-{
-    RTOS_SYMBOLS* current_symbol = nano_os_symbols;
-
-    LOG_DEBUG("Symbols table :\n");
-    while (current_symbol->name != NULL)
-    {
-        LOG_DEBUG(" - %s : 0x%8x\n", current_symbol->name, current_symbol->address);
-        current_symbol++;
-    }
-}
-
-
 /** \brief Look for a thread with the given id */
 static nano_os_thread_t* findThread(const U32 id)
 {
@@ -444,6 +499,62 @@ static nano_os_thread_t* findThread(const U32 id)
     return thread;
 }
 
+/** \brief Macro to read 8 bits data structure offsets */
+#define READ_DATA_STRUCTURE_OFFSET8(value)  err = gdb_api->pfReadU8(nano_os_symbols[1u].address + offset, &nano_os_plugin.offsets.value); \
+                                            ret = ret && (err == 0); \
+                                            offset += 1u;
+
+/** \brief Macro to read 16 bits data structure offsets */
+#define READ_DATA_STRUCTURE_OFFSET16(value)     err = gdb_api->pfReadU16(nano_os_symbols[1u].address + offset, &nano_os_plugin.offsets.value); \
+                                                ret = ret && (err == 0); \
+                                                offset += 2u;
+
+
+/** \brief Fill Nano OS offsets */
+static bool fillNanoOsOffsets(void)
+{
+    bool ret = true;
+
+    /* CHeck if the offsets have already been loaded */
+    if (!nano_os_plugin.offsets_loaded)
+    {
+        int err;
+        U16 offset = 0;
+
+        /* Offsets in nano_os_t structure */
+        READ_DATA_STRUCTURE_OFFSET16(current_task_offset);
+        READ_DATA_STRUCTURE_OFFSET16(tick_count_offset);
+        READ_DATA_STRUCTURE_OFFSET16(task_list_offset);
+
+        /* Offsets in nano_os_task_t structure */
+        READ_DATA_STRUCTURE_OFFSET8(top_of_stack_offset);
+        READ_DATA_STRUCTURE_OFFSET8(stack_origin_offset);
+        READ_DATA_STRUCTURE_OFFSET8(stack_size_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_name_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_state_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_priority_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_id_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_wait_object_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_wait_timeout_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_time_slice_offset);
+        READ_DATA_STRUCTURE_OFFSET8(next_task_offset);
+
+        /* Offsets in nano_os_wait_object_type_t structure */
+        READ_DATA_STRUCTURE_OFFSET8(wait_object_type_offset);
+        READ_DATA_STRUCTURE_OFFSET8(wait_object_id_offset);
+        READ_DATA_STRUCTURE_OFFSET8(wait_object_name_offset);
+
+        /* Check if data has been successfully loaded */
+        if (ret && !((nano_os_plugin.offsets.current_task_offset == 0u) && (nano_os_plugin.offsets.tick_count_offset == 0u)))
+        {
+            nano_os_plugin.offsets_loaded = true;
+        }
+    }
+
+    return ret;
+}
+
+
 /** \brief Fill informations about Nano OS */
 static bool fillNanoOsInfos(void)
 {
@@ -451,15 +562,19 @@ static bool fillNanoOsInfos(void)
     bool ret = true;
 
     /* Read the current thread address */
-    err = gdb_api->pfReadU32(nano_os_symbols[0u].address, &nano_os_plugin.target_current_thread_address);
+    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + nano_os_plugin.offsets.current_task_offset, &nano_os_plugin.target_current_thread_address);
     ret = ret && (err == 0);
+    if (ret && (nano_os_plugin.target_current_thread_address != 0u))
+    {
+        nano_os_plugin.os_started = true;
+    }
     
     /* Read the thread list address */
-    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + 8u, &nano_os_plugin.target_thread_list_address);
+    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + + nano_os_plugin.offsets.task_list_offset, &nano_os_plugin.target_thread_list_address);
     ret = ret && (err == 0);
 
-    /* Read Nano OS started flag */
-    err = gdb_api->pfReadU8(nano_os_symbols[0u].address + 12u, &nano_os_plugin.os_started);
+    /* Read the tick count */
+    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + + nano_os_plugin.offsets.tick_count_offset, &nano_os_plugin.tick_count);
     ret = ret && (err == 0);
 
     return ret;
