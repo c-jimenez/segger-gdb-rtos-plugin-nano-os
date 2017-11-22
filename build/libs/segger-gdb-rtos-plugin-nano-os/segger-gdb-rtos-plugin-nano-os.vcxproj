@@ -142,11 +142,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\CortexM.h" />
+    <ClInclude Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\CPU.h" />
     <ClInclude Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\JLINKARM_Const.h" />
     <ClInclude Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\RTOSPlugin.h" />
     <ClInclude Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\TYPES.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\CortexM.c" />
+    <ClCompile Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\CPU.c" />
     <ClCompile Include="..\..\..\src\libs\segger-gdb-rtos-plugin-nano-os\RTOSPlugin.c" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -17,9 +17,30 @@ Additional information:
 
 ---------------------------END-OF-HEADER------------------------------
 */
+/*
+Copyright(c) 2017 Cedric Jimenez
+
+This file is part of Nano-OS.
+
+Nano-OS is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+Nano-OS is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with Nano-OS.  If not, see <http://www.gnu.org/licenses/>.
+*/
 
 #include "RTOSPlugin.h"
 #include "JLINKARM_Const.h"
+
+#include "CortexM.h"
+
 #include <stdio.h>
 #include <stdbool.h>
 
@@ -153,12 +174,18 @@ typedef struct _nano_os_thread_t
     U8 state;
     /** \brief Priority */
     U8 priority;
+    /** \brief Top of stack address */
+    U32 top_of_stack_address;
+    /** \brief Top of stack address without stack frame */
+    U32 top_of_stack_without_stack_frame_address;
+    /** \brief Top of stack */
+    U8* top_of_stack;
     /** \brief Stack size */
     U32 stack_size;
     /** \brief Indicate if the stack has already been loaded */
     bool stack_loaded;
     /* Top of thread stack (contains thread context) */
-    U32 stack[60u];
+    U8 stack[1024u];
     /** \brief Wait object */
     nano_os_wait_object_t wait_object;
     /** \brief Wait timeout */
@@ -172,6 +199,11 @@ typedef struct _nano_os_thread_t
 /** \brief Nano OS plugin internal data */
 typedef struct _nano_os_plugin_t
 {
+    /** \brief Selected CPU */
+    const nano_os_cpu_port_t* cpu;
+    /** \brief Selected CPU stack frame size in bytes */
+    U32 cpu_stack_frame_size;
+    
     /** \brief Indicate if the OS is tarted */
     bool os_started;
 
@@ -250,6 +282,14 @@ typedef enum _nano_os_wait_object_type_t
 **********************************************************************
 */
 
+
+/** \brief Supported CPUs */
+static const nano_os_cpu_port_t* const nano_os_supported_cpus[] = {
+                                                                    g_cortex_m_cores,
+                                                                    NULL
+                                                                  };
+
+
 /** \brief Pointer to the RTOS symbol table */
 static RTOS_SYMBOLS nano_os_symbols[] = {
                                             { "g_nano_os", 0, 0 },
@@ -312,6 +352,8 @@ static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* co
 /** \brief Fill a wait object information */
 static bool fillNanoOsWaitObjectInfos(const U32 wait_object_address, nano_os_wait_object_t* const wait_object);
 
+/** \brief Dump the stack of a thread */
+static bool dumpThreadStack(nano_os_thread_t* const thread);
 
 /*********************************************************************
 *
@@ -323,32 +365,46 @@ static bool fillNanoOsWaitObjectInfos(const U32 wait_object_address, nano_os_wai
 /** \brief Initializes RTOS plug-in for further usage */
 EXPORT int RTOS_Init(const GDB_API *pAPI, U32 core) 
 {
-    int ret;
+    int ret = 0;
+    const nano_os_cpu_port_t* cpu_list = NULL;
+    const nano_os_cpu_port_t* const * cpu_family = nano_os_supported_cpus;
 
     /* Check selected core */
     gdb_api = pAPI;
-    switch (core)
+    while ((cpu_family != NULL) && (ret == 0))
     {
-        case JLINK_CORE_CORTEX_M0:
-        case JLINK_CORE_CORTEX_M3:
-        case JLINK_CORE_CORTEX_M4:
-        case JLINK_CORE_CORTEX_M7:
-        case JLINK_CORE_CORTEX_A5:
+        cpu_list = (*cpu_family);
+        while ((cpu_list != NULL) && (ret == 0))
         {
-            /* Supported */
-            LOG_DEBUG("Initialized for core 0x%x\n", core);
-            memset(&nano_os_plugin, 0, sizeof(nano_os_plugin));
-            ret = 1;
-            break;
+            /* Check core id */
+            if (cpu_list->core_id == core)
+            {
+                ret = 1;
+            }
+            else
+            {
+                /* Next list */
+                cpu_list++;
+            }
         }
 
-        default:
-        {
-            /* Unsupported */
-            LOG_DEBUG("Unsupported core 0x%x\n", core);
-            ret = 0;
-            break;
-        }
+        /* Next family */
+        cpu_family++;
+    }
+    if (ret == 1)
+    {
+        /* Supported */
+        LOG_DEBUG("Initialized for %s\n", cpu_list->cpu_name);
+        memset(&nano_os_plugin, 0, sizeof(nano_os_plugin));
+        nano_os_plugin.cpu = cpu_list;
+
+        /* Compute stack frame size for the selected CPU */
+        nano_os_plugin.cpu_stack_frame_size = CPU_computeStackFrameSize(nano_os_plugin.cpu);
+    }
+    else
+    {
+        /* Unsupported */
+        LOG_DEBUG("Unsupported core 0x%x\n", core);
     }
 
     return ret;
@@ -504,12 +560,22 @@ EXPORT int RTOS_GetThreadReg(char *pHexRegVal, U32 RegIndex, U32 threadid)
     if (nano_os_plugin.os_started)
     {
         /* Look for the thread */
-        nano_os_thread_t* thread = findThread(threadid);
+        nano_os_thread_t* const thread = findThread(threadid);
         if ((thread != NULL) && (thread != nano_os_plugin.current_thread))
         {
             /* Dump thread stack */
-            // TODO
-            ret = -1;
+            bool success = dumpThreadStack(thread);
+            if (success)
+            {
+                /* Look for the selected register */
+                const nano_os_cpu_reg_t* const cpu_reg = CPU_findRegister(nano_os_plugin.cpu, RegIndex);
+                if (cpu_reg != NULL)
+                {
+                    CPU_getRegValue(nano_os_plugin.cpu, cpu_reg, 
+                                    thread->top_of_stack_without_stack_frame_address, thread->top_of_stack, pHexRegVal);
+                    ret = 0;
+                }
+            }
         }
     }
 
@@ -527,12 +593,24 @@ EXPORT int RTOS_GetThreadRegList(char *pHexRegList, U32 threadid)
     if (nano_os_plugin.os_started)
     {
         /* Look for the thread */
-        nano_os_thread_t* thread = findThread(threadid);
+        nano_os_thread_t* const thread = findThread(threadid);
         if ((thread != NULL) && (thread != nano_os_plugin.current_thread))
         {
             /* Dump thread stack */
-            // TODO
-            ret = -1;
+            bool success = dumpThreadStack(thread);
+            if (success)
+            {
+                /* Go through the whole register list */
+                U32 i;
+                char* value = pHexRegList;
+                for (i = 0; i < nano_os_plugin.cpu->output_reg_count; i++)
+                {
+                    /* Compute value */
+                    value = CPU_getRegValue(nano_os_plugin.cpu, &nano_os_plugin.cpu->registers[i], 
+                                            thread->top_of_stack_without_stack_frame_address, thread->top_of_stack, value);
+                }
+                ret = 0;
+            }
         }
     }
 
@@ -796,6 +874,11 @@ static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* co
     err = gdb_api->pfReadU8(thread_address + nano_os_plugin.offsets.task_priority_offset, &thread->priority);
     ret = ret && (err == 0);
 
+    /* Read top of stack address */
+    err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.top_of_stack_offset, &thread->top_of_stack_address);
+    ret = ret && (err == 0);
+    thread->top_of_stack_without_stack_frame_address = thread->top_of_stack_address - nano_os_plugin.cpu->stack_growth_dir * nano_os_plugin.cpu_stack_frame_size;
+
     /* Read the stack size */
     err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.stack_size_offset, &thread->stack_size);
     ret = ret && (err == 0);
@@ -854,3 +937,39 @@ static bool fillNanoOsWaitObjectInfos(const U32 wait_object_address, nano_os_wai
     return ret;
 }
 
+
+/** \brief Dump the stack of a thread */
+static bool dumpThreadStack(nano_os_thread_t* const thread)
+{
+    bool ret = true;
+
+    /* Check if the stack has already been loaded */
+    if (!thread->stack_loaded)
+    {
+        /* Read stack memory */
+        int err;
+        U32 stack_address = thread->top_of_stack_address;
+        if (nano_os_plugin.cpu->stack_growth_dir == ASCENDING_STACK)
+        {
+            stack_address -= nano_os_plugin.cpu_stack_frame_size;
+        }
+
+        /* Stack has been loaded */
+        err = gdb_api->pfReadMem(stack_address, thread->stack, nano_os_plugin.cpu_stack_frame_size);
+        ret = ret && (err != 0);
+        if (ret)
+        {
+            if (nano_os_plugin.cpu->stack_growth_dir == ASCENDING_STACK)
+            {
+                thread->top_of_stack = thread->stack + nano_os_plugin.cpu_stack_frame_size;
+            }
+            else
+            {
+                thread->top_of_stack = thread->stack;
+            }
+            thread->stack_loaded = true;
+        }
+    }
+
+    return ret;
+}
