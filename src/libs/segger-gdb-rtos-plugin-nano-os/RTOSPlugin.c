@@ -30,11 +30,21 @@ Additional information:
 **********************************************************************
 */
 
+/** \brief DLL export */
 #ifdef WIN32
   #define EXPORT __declspec(dllexport)
 #else
   #define EXPORT __attribute__((visibility("default")))
 #endif
+
+
+/** \brief Invalid 8 bits data structure offset */
+#define NANO_OS_PLUGIN_INVALID_OFFSET8  0xFFu
+
+/** \brief Invalid 16 bits data structure offset */
+#define NANO_OS_PLUGIN_INVALID_OFFSET16 0xFFFFu
+
+
 
 /*********************************************************************
 *
@@ -43,16 +53,18 @@ Additional information:
 **********************************************************************
 */
 
+/** \brief The plugin version number as unsigned integer: 100 * [major] + [minor] */
+#define NANO_OS_PLUGIN_VERSION                  100u
+
+/** \brief Maximum number of threads */
+#define NANO_OS_PLUGIN_MAX_THREAD_COUNT         1024u
+
+
 /** \brief Enable debug prints */
 #define NANO_OS_PLUGIN_DEBUG_PRINT_ENABLED      1
 
 /** \brief Enable error prints */
 #define NANO_OS_PLUGIN_ERROR_PRINT_ENABLED      1
-
-
-/** \brief The plugin version number as unsigned integer: 100 * [major] + [minor] */
-#define NANO_OS_PLUGIN_VERSION                  100u
-
 
 
 #if (NANO_OS_PLUGIN_DEBUG_PRINT_ENABLED == 1)
@@ -119,13 +131,22 @@ typedef struct _nano_os_data_structure_offsets_t
 
 } nano_os_data_structure_offsets_t;
 
-
+/** \brief Nano OS wait object data */
+typedef struct _nano_os_wait_object_t
+{
+    /** \brief Id */
+    U16 id;
+    /** \brief Name */
+    char name[255u];
+    /** \brief Type */
+    U8 type;
+} nano_os_wait_object_t;
 
 /** \brief Nano OS thread data */
 typedef struct _nano_os_thread_t
 {
     /** \brief Id */
-    U32 id;
+    U16 id;
     /** \brief Name */
     char name[255u];
     /** \brief State */
@@ -138,11 +159,14 @@ typedef struct _nano_os_thread_t
     bool stack_loaded;
     /* Top of thread stack (contains thread context) */
     U32 stack[60u];
-    /** \brief Wait object id */
-    U16 wait_object_id;
+    /** \brief Wait object */
+    nano_os_wait_object_t wait_object;
     /** \brief Wait timeout */
     U32 wait_timeout;
+    /** \brief Next thread address */
+    U32 next_thread;
 } nano_os_thread_t;
+
 
 
 /** \brief Nano OS plugin internal data */
@@ -160,7 +184,7 @@ typedef struct _nano_os_plugin_t
     /** \brief Thread count */
     U32 thread_count;
     /** \brief Thread list */
-    nano_os_thread_t* threads;
+    nano_os_thread_t threads[NANO_OS_PLUGIN_MAX_THREAD_COUNT];
     /** \brief Tick count */
     U32 tick_count;
 
@@ -169,14 +193,55 @@ typedef struct _nano_os_plugin_t
     /** \brief Current thread index */
     U32 current_thread_index;
 
-
-
     /** \brief Thread list address in the target memory */
     U32 target_thread_list_address;
     /** \brief Current thread address in the target memory */
     U32 target_current_thread_address;
 } nano_os_plugin_t;
 
+/** \brief Nano OS task states */
+typedef enum _nano_os_task_state_t
+{
+    /** \brief Invalid */
+    NOS_TS_INVALID = -1,
+    /** \brief Unused task */
+    NOS_TS_FREE = 0u,
+    /** \brief Ready task */
+    NOS_TS_READY = 1u,
+    /** \brief Pending task */
+    NOS_TS_PENDING = 2u,
+    /** \brief Running task */
+    NOS_TS_RUNNING = 3u,
+    /** \brief Dead task */
+    NOS_TS_DEAD = 4u,
+    /** \brief State value limit */
+    NOS_TS_MAX = 5u
+} nano_os_task_state_t;
+
+/** \brief Wait object type */
+typedef enum _nano_os_wait_object_type_t
+{
+    /** \brief Invalid */
+    WOT_INVALID = -1,
+    /** \brief Not initialized */
+    WOT_NOT_INIT = 0u,
+    /** \brief Task */
+    WOT_TASK = 1u,
+    /** \brief Semaphore */
+    WOT_SEMAPHORE = 2u,
+    /** \brief Mutex */
+    WOT_MUTEX = 3u,
+    /** \brief Condition variable */
+    WOT_COND_VAR = 4u,
+    /** \brief Timer */
+    WOT_TIMER = 5u,
+    /** \brief Mailbox */
+    WOT_MAILBOX = 6u,
+    /** \brief Flag set */
+    WOT_FLAG_SET = 7u,
+    /** \brief Type value limit */
+    WOT_MAX = 8u
+} nano_os_wait_object_type_t;
 
 /*********************************************************************
 *
@@ -208,6 +273,18 @@ static const char* nano_os_thread_states[] = {
                                                 "DEAD"
                                              };
 
+/** \brief Nano OS wait object type strings */
+static const char* nano_os_wait_object_types[] = {
+                                                    "NOT_INIT",
+                                                    "TASK",
+                                                    "SEMAPHORE",
+                                                    "MUTEX",
+                                                    "COND_VAR",
+                                                    "TIMER",
+                                                    "MAILBOX",
+                                                    "FLAG_SET"
+                                                 };
+
 
 /*********************************************************************
 *
@@ -215,6 +292,10 @@ static const char* nano_os_thread_states[] = {
 *
 **********************************************************************
 */
+
+
+/** \brief Read a string in target memory */
+static bool readString(const U32 string_address, char string[], const U32 string_size);
 
 /** \brief Look for a thread with the given id */
 static nano_os_thread_t* findThread(const U32 id);
@@ -224,6 +305,12 @@ static bool fillNanoOsOffsets(void);
 
 /** \brief Fill informations about Nano OS */
 static bool fillNanoOsInfos(void);
+
+/** \brief Fill a thread information */
+static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* const thread);
+
+/** \brief Fill a wait object information */
+static bool fillNanoOsWaitObjectInfos(const U32 wait_object_address, nano_os_wait_object_t* const wait_object);
 
 
 /*********************************************************************
@@ -249,7 +336,7 @@ EXPORT int RTOS_Init(const GDB_API *pAPI, U32 core)
         case JLINK_CORE_CORTEX_A5:
         {
             /* Supported */
-            LOG_DEBUG("Initialized for core %d\n", core);
+            LOG_DEBUG("Initialized for core 0x%x\n", core);
             memset(&nano_os_plugin, 0, sizeof(nano_os_plugin));
             ret = 1;
             break;
@@ -258,7 +345,7 @@ EXPORT int RTOS_Init(const GDB_API *pAPI, U32 core)
         default:
         {
             /* Unsupported */
-            LOG_DEBUG("Unsupported core %d\n", core);
+            LOG_DEBUG("Unsupported core 0x%x\n", core);
             ret = 0;
             break;
         }
@@ -341,10 +428,57 @@ EXPORT int RTOS_GetThreadDisplay(char *pDisplay, U32 threadid)
         if (thread != NULL)
         {
             /* Create the thread name */
-            ret = snprintf(pDisplay, 256u, "%s - %s - P%3d", 
-                                            thread->name, 
-                                            nano_os_thread_states[thread->state], 
-                                            thread->priority);
+            if (thread->state == NOS_TS_PENDING)
+            {
+                char timeout_str[30u];
+                const U32 timeout = thread->wait_timeout - nano_os_plugin.tick_count;
+                const char* wait_object_type_name = "UNKNOWN";
+                if (thread->wait_object.type < WOT_MAX)
+                {
+                    wait_object_type_name = nano_os_wait_object_types[thread->wait_object.type];
+                }
+                if (timeout > 0xF0000000u)
+                {
+                    snprintf(timeout_str, sizeof(timeout_str), "forever");
+                }
+                else
+                {
+                    snprintf(timeout_str, sizeof(timeout_str), "%u ticks", timeout);
+                }
+                if (thread->wait_object.name[0u] != 0u)
+                {
+                    ret = snprintf(pDisplay, 256u, "%s - %s [%s : %s - %s] - P%03d",
+                                   thread->name,
+                                   nano_os_thread_states[thread->state],
+                                   wait_object_type_name,
+                                   thread->wait_object.name,
+                                   timeout_str,
+                                   thread->priority);
+                }
+                else
+                {
+                    ret = snprintf(pDisplay, 256u, "%s - %s [%s : %d - %s] - P%03d",
+                                   thread->name,
+                                   nano_os_thread_states[thread->state],
+                                   wait_object_type_name,
+                                   thread->wait_object.id,
+                                   timeout_str,
+                                   thread->priority);
+                }
+            }
+            else if (thread->state < NOS_TS_MAX)
+            {
+                ret = snprintf(pDisplay, 256u, "%s - %s - P%03d", 
+                                                thread->name, 
+                                                nano_os_thread_states[thread->state], 
+                                                thread->priority);
+            }
+            else
+            {
+                ret = snprintf(pDisplay, 256u, "%s - UNKNOWN - P%03d",
+                               thread->name,
+                               thread->priority);
+            }
         }
         else
         {
@@ -461,11 +595,41 @@ EXPORT int RTOS_UpdateThreads()
 
     // Fill informations about Nano OS
     success = fillNanoOsOffsets();
-    success = success && fillNanoOsInfos();
-    if (success)
+    if (success && nano_os_plugin.offsets_loaded)
     {
+        success = success && fillNanoOsInfos();
+        if (success)
+        {
+            // Go through the OS thread list to refresh thread infos
+            U32 thread_address = nano_os_plugin.target_thread_list_address;
+            nano_os_plugin.thread_count = 0u;
+            nano_os_plugin.current_thread = NULL;
+            while (success && (thread_address != 0u))
+            {
+                // Fill thread infos
+                success = fillNanoOsThreadInfos(thread_address, &nano_os_plugin.threads[nano_os_plugin.thread_count]);
+                if (success)
+                {
+                    // Check if this is the current running thread
+                    if (thread_address == nano_os_plugin.target_current_thread_address)
+                    {
+                        nano_os_plugin.current_thread = &nano_os_plugin.threads[nano_os_plugin.thread_count];
+                    }
 
-        ret = 0;
+                    // Next thread
+                    thread_address = nano_os_plugin.threads[nano_os_plugin.thread_count].next_thread;
+                    nano_os_plugin.thread_count++;
+                    if (nano_os_plugin.thread_count == NANO_OS_PLUGIN_MAX_THREAD_COUNT)
+                    {
+                        success = false;
+                    }
+                }
+            }
+            if (success)
+            {
+                ret = 0;
+            }
+        }
     }
 
     return ret;
@@ -480,6 +644,29 @@ EXPORT int RTOS_UpdateThreads()
 *
 **********************************************************************
 */
+
+/** \brief Read a string in target memory */
+static bool readString(const U32 string_address, char string[], const U32 string_size)
+{
+    int err;
+    bool ret = true;
+
+    /* Read the string content address */
+    U32 string_content_address = 0u;
+    err = gdb_api->pfReadU32(string_address, &string_content_address);
+    ret = ret && (err == 0);
+    if (ret)
+    {
+        /* Read the whole string */
+        err = gdb_api->pfReadMem(string_content_address, string, string_size);
+        ret = ret && (err != 0);
+    }
+
+    /* Terminate string */
+    string[string_size - 1u] = 0;
+
+    return ret;
+}
 
 
 /** \brief Look for a thread with the given id */
@@ -570,11 +757,98 @@ static bool fillNanoOsInfos(void)
     }
     
     /* Read the thread list address */
-    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + + nano_os_plugin.offsets.task_list_offset, &nano_os_plugin.target_thread_list_address);
+    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + nano_os_plugin.offsets.task_list_offset, &nano_os_plugin.target_thread_list_address);
     ret = ret && (err == 0);
 
     /* Read the tick count */
-    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + + nano_os_plugin.offsets.tick_count_offset, &nano_os_plugin.tick_count);
+    err = gdb_api->pfReadU32(nano_os_symbols[0u].address + nano_os_plugin.offsets.tick_count_offset, &nano_os_plugin.tick_count);
+    ret = ret && (err == 0);
+
+    return ret;
+}
+
+
+/** \brief Fill a thread information */
+static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* const thread)
+{
+    int err;
+    bool ret = true;
+
+    /* Read the thread id */
+    err = gdb_api->pfReadU16(thread_address + nano_os_plugin.offsets.task_id_offset, &thread->id);
+    ret = ret && (err == 0);
+
+    /* Read the thread name */
+    if (nano_os_plugin.offsets.task_name_offset == NANO_OS_PLUGIN_INVALID_OFFSET8)
+    {
+        strcpy(thread->name, "Unknown task");
+    }
+    else
+    {
+        ret = readString(thread_address + nano_os_plugin.offsets.task_name_offset, thread->name, sizeof(thread->name));
+    }
+
+    /* Read the thread state */
+    err = gdb_api->pfReadU8(thread_address + nano_os_plugin.offsets.task_state_offset, &thread->state);
+    ret = ret && (err == 0);
+
+    /* Read the thread priority */
+    err = gdb_api->pfReadU8(thread_address + nano_os_plugin.offsets.task_priority_offset, &thread->priority);
+    ret = ret && (err == 0);
+
+    /* Read the stack size */
+    err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.stack_size_offset, &thread->stack_size);
+    ret = ret && (err == 0);
+
+    /* Delay stack load */
+    thread->stack_loaded = false;
+
+    /* Read the wait object */
+    U32 wait_object_address = 0u;
+    err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.task_wait_object_offset, &wait_object_address);
+    ret = ret && (err == 0);
+    if (wait_object_address != 0u)
+    {
+        ret = fillNanoOsWaitObjectInfos(wait_object_address, &thread->wait_object);
+    }
+    else
+    {
+        memset(&thread->wait_object, 0, sizeof(nano_os_wait_object_t));
+    }
+
+    /* Read the wait timeout */
+    err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.task_wait_timeout_offset, &thread->wait_timeout);
+    ret = ret && (err == 0);
+
+    /* Read the next task address */
+    err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.next_task_offset, &thread->next_thread);
+    ret = ret && (err == 0);
+    
+    return ret;
+}
+
+/** \brief Fill a wait object information */
+static bool fillNanoOsWaitObjectInfos(const U32 wait_object_address, nano_os_wait_object_t* const wait_object)
+{
+    int err;
+    bool ret = true;
+
+    /* Read the id */
+    err = gdb_api->pfReadU16(wait_object_address + nano_os_plugin.offsets.wait_object_id_offset, &wait_object->id);
+    ret = ret && (err == 0);
+
+    /* Read the name */
+    if (nano_os_plugin.offsets.wait_object_name_offset == NANO_OS_PLUGIN_INVALID_OFFSET8)
+    {
+        strcpy(wait_object->name, "");
+    }
+    else
+    {
+        ret = readString(wait_object_address + nano_os_plugin.offsets.wait_object_name_offset, wait_object->name, sizeof(wait_object->name));
+    }
+
+    /* Read the type */
+    err = gdb_api->pfReadU8(wait_object_address + nano_os_plugin.offsets.wait_object_type_offset, &wait_object->type);
     ret = ret && (err == 0);
 
     return ret;
