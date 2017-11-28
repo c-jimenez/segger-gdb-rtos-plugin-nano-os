@@ -24,12 +24,12 @@ along with Nano-OS.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdbool.h>
 
 /** \brief Compute the stack frame size for a given CPU */
-U32 CPU_computeStackFrameSize(const nano_os_cpu_port_t* const cpu)
+U32 CPU_computeStackFrameSize(const nano_os_cpu_register_set_t* const cpu_reg_set)
 {
     U32 stack_frame_size = 0u;
 
     /* Go through all CPU registers */
-    const nano_os_cpu_reg_t* cpu_reg = cpu->registers;
+    const nano_os_cpu_reg_t* cpu_reg = cpu_reg_set->registers;
     while (cpu_reg->name != NULL)
     {
         /* Compute size only for stacked registers */
@@ -47,12 +47,12 @@ U32 CPU_computeStackFrameSize(const nano_os_cpu_port_t* const cpu)
 
 
 /** \brief Find a register indentified by its id for a given CPU */
-const nano_os_cpu_reg_t* CPU_findRegister(const nano_os_cpu_port_t* const cpu, const U32 register_id)
+const nano_os_cpu_reg_t* CPU_findRegister(const nano_os_cpu_register_set_t* const cpu_reg_set, const U32 register_id)
 {
     bool found = false;
 
     /* Go through all CPU registers */
-    const nano_os_cpu_reg_t* cpu_reg = cpu->registers;
+    const nano_os_cpu_reg_t* cpu_reg = cpu_reg_set->registers;
     while ((cpu_reg->name != NULL) && !found)
     {
         /* Check register id */

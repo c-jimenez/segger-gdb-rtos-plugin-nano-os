@@ -142,6 +142,8 @@ typedef struct _nano_os_data_structure_offsets_t
     U8 task_time_slice_offset;
     /** \brief Offset of next task in nano_os_task_t structure */
     U8 next_task_offset;
+    /** \brief Offset of the port specific data in nano_os_task_t structure */
+    U8 task_port_data_offset;
 
     /** \brief Offset of wait object type in nano_os_wait_object_t structure */
     U8 wait_object_type_offset;
@@ -397,9 +399,6 @@ EXPORT int RTOS_Init(const GDB_API *pAPI, U32 core)
         LOG_DEBUG("Initialized for %s\n", cpu_list->cpu_name);
         memset(&nano_os_plugin, 0, sizeof(nano_os_plugin));
         nano_os_plugin.cpu = cpu_list;
-
-        /* Compute stack frame size for the selected CPU */
-        nano_os_plugin.cpu_stack_frame_size = CPU_computeStackFrameSize(nano_os_plugin.cpu);
     }
     else
     {
@@ -567,13 +566,19 @@ EXPORT int RTOS_GetThreadReg(char *pHexRegVal, U32 RegIndex, U32 threadid)
             bool success = dumpThreadStack(thread);
             if (success)
             {
-                /* Look for the selected register */
-                const nano_os_cpu_reg_t* const cpu_reg = CPU_findRegister(nano_os_plugin.cpu, RegIndex);
-                if (cpu_reg != NULL)
+                /* Get the register list */
+                const nano_os_cpu_register_set_t* const cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api,
+                                                                                                        nano_os_plugin.target_current_thread_address + nano_os_plugin.offsets.task_port_data_offset);
+                if (cpu_reg_set != NULL)
                 {
-                    CPU_getRegValue(nano_os_plugin.cpu, cpu_reg, 
-                                    thread->top_of_stack_without_stack_frame_address, thread->top_of_stack, pHexRegVal);
-                    ret = 0;
+                    /* Look for the selected register */
+                    const nano_os_cpu_reg_t* const cpu_reg = CPU_findRegister(cpu_reg_set, RegIndex);
+                    if (cpu_reg != NULL)
+                    {
+                        CPU_getRegValue(nano_os_plugin.cpu, cpu_reg, 
+                                        thread->top_of_stack_without_stack_frame_address, thread->top_of_stack, pHexRegVal);
+                        ret = 0;
+                    }
                 }
             }
         }
@@ -600,14 +605,20 @@ EXPORT int RTOS_GetThreadRegList(char *pHexRegList, U32 threadid)
             bool success = dumpThreadStack(thread);
             if (success)
             {
-                /* Go through the whole register list */
-                U32 i;
-                char* value = pHexRegList;
-                for (i = 0; i < nano_os_plugin.cpu->output_reg_count; i++)
+                /* Get the register list */
+                const nano_os_cpu_register_set_t* const cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api, 
+                                                                                                        nano_os_plugin.target_current_thread_address + nano_os_plugin.offsets.task_port_data_offset);
+                if (cpu_reg_set != NULL)
                 {
-                    /* Compute value */
-                    value = CPU_getRegValue(nano_os_plugin.cpu, &nano_os_plugin.cpu->registers[i], 
-                                            thread->top_of_stack_without_stack_frame_address, thread->top_of_stack, value);
+                    /* Go through the whole register list */
+                    U32 i;
+                    char* value = pHexRegList;
+                    for (i = 0; i < cpu_reg_set->output_reg_count; i++)
+                    {
+                        /* Compute value */
+                        value = CPU_getRegValue(nano_os_plugin.cpu, &cpu_reg_set->registers[i],
+                                                thread->top_of_stack_without_stack_frame_address, thread->top_of_stack, value);
+                    }
                 }
                 ret = 0;
             }
@@ -803,6 +814,7 @@ static bool fillNanoOsOffsets(void)
         READ_DATA_STRUCTURE_OFFSET8(task_wait_timeout_offset);
         READ_DATA_STRUCTURE_OFFSET8(task_time_slice_offset);
         READ_DATA_STRUCTURE_OFFSET8(next_task_offset);
+        READ_DATA_STRUCTURE_OFFSET8(task_port_data_offset);
 
         /* Offsets in nano_os_wait_object_type_t structure */
         READ_DATA_STRUCTURE_OFFSET8(wait_object_type_offset);
@@ -851,6 +863,7 @@ static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* co
 {
     int err;
     bool ret = true;
+    const nano_os_cpu_register_set_t* cpu_reg_set;
 
     /* Read the thread id */
     err = gdb_api->pfReadU16(thread_address + nano_os_plugin.offsets.task_id_offset, &thread->id);
@@ -877,7 +890,21 @@ static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* co
     /* Read top of stack address */
     err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.top_of_stack_offset, &thread->top_of_stack_address);
     ret = ret && (err == 0);
-    thread->top_of_stack_without_stack_frame_address = thread->top_of_stack_address - nano_os_plugin.cpu->stack_growth_dir * nano_os_plugin.cpu_stack_frame_size;
+
+    /* Compute stack frame size for the selected CPU */
+    cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api,
+                                                    nano_os_plugin.target_current_thread_address + nano_os_plugin.offsets.task_port_data_offset);
+    if (cpu_reg_set != NULL)
+    {
+        nano_os_plugin.cpu_stack_frame_size = CPU_computeStackFrameSize(cpu_reg_set);
+
+        /* Compute top of stack address before context saving */
+        thread->top_of_stack_without_stack_frame_address = thread->top_of_stack_address - nano_os_plugin.cpu->stack_growth_dir * nano_os_plugin.cpu_stack_frame_size;
+    }
+    else
+    {
+        ret = false;
+    }
 
     /* Read the stack size */
     err = gdb_api->pfReadU32(thread_address + nano_os_plugin.offsets.stack_size_offset, &thread->stack_size);
