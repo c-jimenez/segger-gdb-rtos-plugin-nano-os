@@ -58,7 +58,7 @@ typedef struct _nano_os_cpu_register_set_t
 } nano_os_cpu_register_set_t;
 
 /** \brief Function which retrieve a set of CPU registers */
-typedef const nano_os_cpu_register_set_t* (*fp_cpu_registers_get)(const GDB_API* gdb_api, const U32 task_port_data_address);
+typedef const nano_os_cpu_register_set_t* (*fp_cpu_registers_get)(const GDB_API* gdb_api, const char* const port_name, const U32 task_port_data_address);
 
 /** \brief Description of a CPU port */
 typedef struct _nano_os_cpu_port_t

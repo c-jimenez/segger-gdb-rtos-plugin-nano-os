@@ -25,33 +25,64 @@ along with Nano-OS.  If not, see <http://www.gnu.org/licenses/>.
 
 /** \brief Cortex-M0 register description */
 static const nano_os_cpu_reg_t cortex_m0_registers[] = {
-                                                        { 0u, "R0", 0x24, 4u },
-                                                        { 1u, "R1", 0x28, 4u },
-                                                        { 2u, "R2", 0x2C, 4u },
-                                                        { 3u, "R3", 0x30, 4u },
-                                                        { 4u, "R4", 0x14, 4u },
-                                                        { 5u, "R5", 0x18, 4u },
-                                                        { 6u, "R6", 0x1C, 4u },
-                                                        { 7u, "R7", 0x20, 4u },
-                                                        { 8u, "R8", 0x04, 4u },
-                                                        { 9u, "R9", 0x08, 4u },
-                                                        { 10u, "R10", 0x0C, 4u },
-                                                        { 11u, "R11", 0x10, 4u },
-                                                        { 12u, "R12", 0x34, 4u },
+                                                        { 0u, "R0", 0x20, 4u },
+                                                        { 1u, "R1", 0x24, 4u },
+                                                        { 2u, "R2", 0x28, 4u },
+                                                        { 3u, "R3", 0x2C, 4u },
+                                                        { 4u, "R4", 0x10, 4u },
+                                                        { 5u, "R5", 0x14, 4u },
+                                                        { 6u, "R6", 0x18, 4u },
+                                                        { 7u, "R7", 0x1C, 4u },
+                                                        { 8u, "R8", 0x00, 4u },
+                                                        { 9u, "R9", 0x04, 4u },
+                                                        { 10u, "R10", 0x08, 4u },
+                                                        { 11u, "R11", 0x0C, 4u },
+                                                        { 12u, "R12", 0x30, 4u },
                                                         { 13u, "SP", CPU_REG_SP_OFFSET, 4u },
-                                                        { 14u, "LR", 0x38, 4u },
-                                                        { 15u, "PC", 0x3C, 4u },
+                                                        { 14u, "LR", 0x34, 4u },
+                                                        { 15u, "PC", 0x38, 4u },
 
-                                                        { 25u, "XPSR", 0x40, 4u },
+                                                        { 25u, "XPSR", 0x3C, 4u },
                                                         { 26u, "MSP", CPU_REG_INVALID_OFFSET, 4u },
                                                         { 27u, "PSP", CPU_REG_INVALID_OFFSET, 4u },
                                                         { 28u, "PRIMASK", CPU_REG_INVALID_OFFSET, 4u },
                                                         { 29u, "BASEPRI", CPU_REG_INVALID_OFFSET, 4u },
                                                         { 30u, "FAULTMASK", CPU_REG_INVALID_OFFSET, 4u },
-                                                        { 31u, "CONTROL", 0x00, 4u },
+                                                        { 31u, "CONTROL", CPU_REG_INVALID_OFFSET, 4u },
 
                                                         { 0u, NULL, 0x00, 0u }
                                                        };
+
+
+/** \brief Cortex-M0+ register description */
+static const nano_os_cpu_reg_t cortex_m0p_registers[] = {
+                                                            { 0u, "R0", 0x24, 4u },
+                                                            { 1u, "R1", 0x28, 4u },
+                                                            { 2u, "R2", 0x2C, 4u },
+                                                            { 3u, "R3", 0x30, 4u },
+                                                            { 4u, "R4", 0x14, 4u },
+                                                            { 5u, "R5", 0x18, 4u },
+                                                            { 6u, "R6", 0x1C, 4u },
+                                                            { 7u, "R7", 0x20, 4u },
+                                                            { 8u, "R8", 0x04, 4u },
+                                                            { 9u, "R9", 0x08, 4u },
+                                                            { 10u, "R10", 0x0C, 4u },
+                                                            { 11u, "R11", 0x10, 4u },
+                                                            { 12u, "R12", 0x34, 4u },
+                                                            { 13u, "SP", CPU_REG_SP_OFFSET, 4u },
+                                                            { 14u, "LR", 0x38, 4u },
+                                                            { 15u, "PC", 0x3C, 4u },
+
+                                                            { 25u, "XPSR", 0x40, 4u },
+                                                            { 26u, "MSP", CPU_REG_INVALID_OFFSET, 4u },
+                                                            { 27u, "PSP", CPU_REG_INVALID_OFFSET, 4u },
+                                                            { 28u, "PRIMASK", CPU_REG_INVALID_OFFSET, 4u },
+                                                            { 29u, "BASEPRI", CPU_REG_INVALID_OFFSET, 4u },
+                                                            { 30u, "FAULTMASK", CPU_REG_INVALID_OFFSET, 4u },
+                                                            { 31u, "CONTROL", 0x00, 4u },
+
+                                                            { 0u, NULL, 0x00, 0u }
+                                                          };
 
 /** \brief Cortex-Mx base register description */
 static const nano_os_cpu_reg_t cortex_m_registers[] =  {
@@ -151,6 +182,9 @@ static const nano_os_cpu_reg_t cortex_m_vfp_registers[] = {
 /** \brief Cortex-M0 register set */
 static const nano_os_cpu_register_set_t cortex_m0_register_set = { cortex_m0_registers, 17u };
 
+/** \brief Cortex-M0+ register set */
+static const nano_os_cpu_register_set_t cortex_m0p_register_set = { cortex_m0p_registers, 17u };
+
 /** \brief Cortex-Mx base register set */
 static const nano_os_cpu_register_set_t cortex_m_register_set = { cortex_m_registers, 17u };
 
@@ -160,25 +194,32 @@ static const nano_os_cpu_register_set_t cortex_m_vfp_register_set = { cortex_m_v
 
 
 /** \brief Function which retrieve the set of CPU registers for Cortex-M0 */
-static const nano_os_cpu_register_set_t* CORTEXM0_CpuRegistersGet(const GDB_API* gdb_api, const U32 task_port_data_address)
+static const nano_os_cpu_register_set_t* CORTEXM0_CpuRegistersGet(const GDB_API* gdb_api, const char* const port_name, const U32 task_port_data_address)
 {
     (void)gdb_api;
     (void)task_port_data_address;
-    return &cortex_m0_register_set;
+    const nano_os_cpu_register_set_t* ret = &cortex_m0_register_set;
+    if (strcmp(port_name, "cortex-m0+") == 0)
+    {
+        ret = &cortex_m0p_register_set;
+    }
+    return ret;
 }
 
 /** \brief Function which retrieve the set of CPU registers for Cortex-M3 */
-static const nano_os_cpu_register_set_t* CORTEXM3_CpuRegistersGet(const GDB_API* gdb_api, const U32 task_port_data_address)
+static const nano_os_cpu_register_set_t* CORTEXM3_CpuRegistersGet(const GDB_API* gdb_api, const char* const port_name, const U32 task_port_data_address)
 {
     (void)gdb_api;
+    (void)port_name;
     (void)task_port_data_address;
     return &cortex_m_register_set;
 }
 
 /** \brief Function which retrieve the set of CPU registers for Cortex-Mx with VFP */
-static const nano_os_cpu_register_set_t* CORTEXMxVFP_CpuRegistersGet(const GDB_API* gdb_api, const U32 task_port_data_address)
+static const nano_os_cpu_register_set_t* CORTEXMxVFP_CpuRegistersGet(const GDB_API* gdb_api, const char* const port_name, const U32 task_port_data_address)
 {
     U8 use_float;
+    (void)port_name;
     const nano_os_cpu_register_set_t* ret = NULL;
 
     /* Read the floating point usage flag */

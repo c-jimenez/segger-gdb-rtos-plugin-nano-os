@@ -113,6 +113,9 @@ along with Nano-OS.  If not, see <http://www.gnu.org/licenses/>.
 /** \brief Nano OS debug informations for Segger GDB RTOS plugin */
 typedef struct _nano_os_data_structure_offsets_t
 {
+    /** \brief Port name */
+    U32 port_name;
+
     /** \brief Offset of pointer to current task in nano_os_t structure */
     U16 current_task_offset;
     /** \brief Offset of tick count in nano_os_t structure */
@@ -201,6 +204,9 @@ typedef struct _nano_os_thread_t
 /** \brief Nano OS plugin internal data */
 typedef struct _nano_os_plugin_t
 {
+    /** \brief Port name */
+    char port_name[255u];
+
     /** \brief Selected CPU */
     const nano_os_cpu_port_t* cpu;
     /** \brief Selected CPU stack frame size in bytes */
@@ -567,7 +573,7 @@ EXPORT int RTOS_GetThreadReg(char *pHexRegVal, U32 RegIndex, U32 threadid)
             if (success)
             {
                 /* Get the register list */
-                const nano_os_cpu_register_set_t* const cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api,
+                const nano_os_cpu_register_set_t* const cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api, nano_os_plugin.port_name,
                                                                                                         nano_os_plugin.target_current_thread_address + nano_os_plugin.offsets.task_port_data_offset);
                 if (cpu_reg_set != NULL)
                 {
@@ -606,7 +612,7 @@ EXPORT int RTOS_GetThreadRegList(char *pHexRegList, U32 threadid)
             if (success)
             {
                 /* Get the register list */
-                const nano_os_cpu_register_set_t* const cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api, 
+                const nano_os_cpu_register_set_t* const cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api, nano_os_plugin.port_name,
                                                                                                         nano_os_plugin.target_current_thread_address + nano_os_plugin.offsets.task_port_data_offset);
                 if (cpu_reg_set != NULL)
                 {
@@ -785,6 +791,11 @@ static nano_os_thread_t* findThread(const U32 id)
                                                 ret = ret && (err == 0); \
                                                 offset += 2u;
 
+/** \brief Macro to read 32 bits data structure offsets */
+#define READ_DATA_STRUCTURE_OFFSET32(value)     err = gdb_api->pfReadU32(nano_os_symbols[1u].address + offset, &nano_os_plugin.offsets.value); \
+                                                ret = ret && (err == 0); \
+                                                offset += 4u;
+
 
 /** \brief Fill Nano OS offsets */
 static bool fillNanoOsOffsets(void)
@@ -796,6 +807,9 @@ static bool fillNanoOsOffsets(void)
     {
         int err;
         U16 offset = 0;
+
+        /* Port name */
+        READ_DATA_STRUCTURE_OFFSET32(port_name);
 
         /* Offsets in nano_os_t structure */
         READ_DATA_STRUCTURE_OFFSET16(current_task_offset);
@@ -824,7 +838,16 @@ static bool fillNanoOsOffsets(void)
         /* Check if data has been successfully loaded */
         if (ret && !((nano_os_plugin.offsets.current_task_offset == 0u) && (nano_os_plugin.offsets.tick_count_offset == 0u)))
         {
-            nano_os_plugin.offsets_loaded = true;
+            /* Read the port name */
+            err = gdb_api->pfReadMem(nano_os_plugin.offsets.port_name, nano_os_plugin.port_name, sizeof(nano_os_plugin.port_name));
+            ret = ret && (err != 0);
+            if (ret)
+            {
+                nano_os_plugin.port_name[sizeof(nano_os_plugin.port_name) - 1u] = 0;
+                nano_os_plugin.offsets_loaded = true;
+            }
+
+            
         }
     }
 
@@ -892,7 +915,7 @@ static bool fillNanoOsThreadInfos(const U32 thread_address, nano_os_thread_t* co
     ret = ret && (err == 0);
 
     /* Compute stack frame size for the selected CPU */
-    cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api,
+    cpu_reg_set = nano_os_plugin.cpu->registers_get(gdb_api, nano_os_plugin.port_name,
                                                     nano_os_plugin.target_current_thread_address + nano_os_plugin.offsets.task_port_data_offset);
     if (cpu_reg_set != NULL)
     {
