@@ -753,8 +753,15 @@ static bool readString(const U32 string_address, char string[], const U32 string
     if (ret)
     {
         /* Read the whole string */
-        err = gdb_api->pfReadMem(string_content_address, string, string_size);
-        ret = ret && (err != 0);
+        if (string_content_address != 0u)
+        {
+            err = gdb_api->pfReadMem(string_content_address, string, string_size);
+            ret = ret && (err != 0);
+        }
+        else
+        {
+            strcpy(string, "");
+        }
     }
 
     /* Terminate string */
